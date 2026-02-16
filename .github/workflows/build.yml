@@ -1,0 +1,154 @@
+name: Build ffmpeg with WHIP support
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  print:
+    runs-on: ubuntu-latest
+    env:
+      PREFIX: ${{ github.workspace }}/ffmpeg_build
+      PACKAGE_DIR: ${{ github.workspace }}/ffmpeg_package
+    steps:
+      - name: Install prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update -qq && sudo apt-get -y install \
+            autoconf \
+            automake \
+            build-essential \
+            cmake \
+            git-core \
+            libass-dev \
+            libfreetype6-dev \
+            libgnutls28-dev \
+            libmp3lame-dev \
+            libsdl2-dev \
+            libtool \
+            libva-dev \
+            libvdpau-dev \
+            libvorbis-dev \
+            libxcb1-dev \
+            libxcb-shm0-dev \
+            libxcb-xfixes0-dev \
+            meson \
+            ninja-build \
+            pkg-config \
+            texinfo \
+            wget \
+            yasm \
+            zlib1g-dev \
+            libunistring-dev \
+            libaom-dev \
+            libdav1d-dev \
+            nasm \
+            libx264-dev \
+            libx265-dev \
+            libnuma-dev \
+            libvpx-dev \
+            libfdk-aac-dev \
+            libopus-dev \
+            libsvtav1enc-dev \
+            libjack-jackd2-dev
+
+          sudo apt-get update -qq
+          sudo apt-get install -y libgnutls28-dev
+
+          export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:$PKG_CONFIG_PATH"
+          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
+
+      - name: Build libdatachannel
+        shell: bash
+        run: |
+          git clone --recursive https://github.com/paullouisageneau/libdatachannel.git /tmp/libdatachannel
+          cd /tmp/libdatachannel
+          mkdir -p build
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_GNUTLS=1 \
+            -DUSE_NICE=0 \
+            -DCMAKE_INSTALL_PREFIX="${PREFIX}"
+          cmake --build build
+          cmake --install build
+
+      - name: Build ffmpeg
+        shell: bash
+        run: |
+          git clone --recursive https://github.com/parallelcc/FFmpeg-WHIP-WHEP.git ffmpeg_sources
+          cd ffmpeg_sources
+
+          export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export CFLAGS="-I${PREFIX}/include"
+          export LDFLAGS="-L${PREFIX}/lib"
+          export LD_LIBRARY_PATH="${PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+        
+          ./configure \
+              --prefix="${PREFIX}" \
+              --pkg-config-flags="--static" \
+              --extra-cflags="${CFLAGS}" \
+              --extra-ldflags="${LDFLAGS}" \
+              --extra-libs="-lpthread -lm" \
+              --ld="g++" \
+              --enable-gpl \
+              --enable-gnutls \
+              --enable-libaom \
+              --enable-libass \
+              --enable-libdav1d \
+              --enable-libfdk-aac \
+              --enable-libfreetype \
+              --enable-libmp3lame \
+              --enable-libopus \
+              --enable-libsvtav1 \
+              --enable-libvorbis \
+              --enable-libvpx \
+              --enable-libx264 \
+              --enable-libx265 \
+              --enable-nonfree \
+              --enable-libdatachannel \
+              --enable-libpulse \
+              --enable-libjack \
+            && make \
+            && make install
+
+      - name: Package FFmpeg
+        shell: bash
+        run: |
+          rm -rf "${PACKAGE_DIR}"
+          mkdir -p "${PACKAGE_DIR}/usr/local"
+
+          cp -a "${PREFIX}/bin" "${PACKAGE_DIR}/usr/local/" || true
+          cp -a "${PREFIX}/lib" "${PACKAGE_DIR}/usr/local/" || true
+          cp -a "${PREFIX}/share" "${PACKAGE_DIR}/usr/local/" || true
+
+          TAR_NAME="ffmpeg-${{ github.run_number }}-linux-x86_64.tar.gz"
+          tar -czf "${TAR_NAME}" -C "${PACKAGE_DIR}" usr/local
+
+          echo "Created package: ${TAR_NAME}"
+          tar -tvzf "${TAR_NAME}"
+        id: package
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        with:
+          tag_name: build-${{ github.run_number }}
+          release_name: "FFmpeg build ${{ github.run_number }} (linux)"
+          body: "Automated build of FFmpeg for Linux with WHIP support and libdatachannel, libpulse and libjack enabled."
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload tarball to Release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./ffmpeg-${{ github.run_number }}-linux-x86_64.tar.gz
+          asset_name: ffmpeg-${{ github.run_number }}-linux-x86_64.tar.gz
+          asset_content_type: application/gzip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,1 +1,1 @@
-# ffmpeg_prebuilt
+Prebuilt Linux version of ffmpeg with WHIP support.
